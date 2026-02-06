@@ -1,0 +1,339 @@
+/*
+ * BB: The portable demo (modernized 2026)
+ *
+ * Original (C) 1997 AA-group
+ * Modernization: safety, C17, bugfixes
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <limits.h>
+#include <aalib.h>
+
+#include "bb.h"
+#include "patnik.h"
+#include "torus.h"
+
+/* ------------------------------------------------------------------ */
+/* Types */
+
+typedef uint8_t  byte;
+typedef uint16_t word;
+typedef uint32_t dword;
+
+/* ------------------------------------------------------------------ */
+
+#define DEG (M_PI / 180.0)
+#define MAX_FACES 500
+
+typedef long TBL[361];
+
+typedef struct {
+    long x, y, z;
+    long n_x, n_y, n_z;
+} POLY;
+
+typedef POLY POLYS[3];
+
+typedef struct {
+    long x, y, z;
+    long n_x, n_y, n_z;
+} TRANSFORMED;
+
+typedef TRANSFORMED TRANS[MAX_FACES][3];
+
+/* ------------------------------------------------------------------ */
+/* Globals */
+
+static aa_context *context = NULL;
+static aa_renderparams *params = NULL;
+
+static TBL sinn, coss;
+
+static POLYS *obj = NULL;
+static POLYS rot[MAX_FACES];
+static TRANS polyg;
+
+static int *zbuff = NULL;
+static byte *envmapa = NULL;
+
+static int nFaces = 0;
+
+static dword alfa = 0, beta = 0, gama = 0;
+static int centerx = 0, centery = 0, centerz = 0;
+static float zoom = 2.0f;
+
+/* ------------------------------------------------------------------ */
+/* Helpers */
+
+static inline int screen_w(void) { return aa_imgwidth(context); }
+static inline int screen_h(void) { return aa_imgheight(context); }
+static inline byte *screen_buf(void) { return context->imagebuffer; }
+
+static inline int X_S(void) { return screen_w() / 2; }
+static inline int Y_S(void) { return screen_h() / 2; }
+
+static inline float XRATIO(void) { return screen_w() * zoom / 320.0f; }
+static inline float YRATIO(void)
+{
+    return screen_h() * zoom *
+           aa_mmwidth(context) /
+           aa_mmheight(context) / 320.0f;
+}
+
+/* ------------------------------------------------------------------ */
+
+static void precalculate(void)
+{
+    for (int i = 0; i <= 360; ++i) {
+        sinn[i] = (long)(sin(i * DEG) * 65536.0);
+        coss[i] = (long)(cos(i * DEG) * 65536.0);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Z-buffer */
+
+static bool set_zbuff(void)
+{
+    size_t size = (size_t)screen_w() * screen_h();
+    zbuff = malloc(size * sizeof(*zbuff));
+    return zbuff != NULL;
+}
+
+static void unset_zbuff(void)
+{
+    free(zbuff);
+    zbuff = NULL;
+}
+
+static void clear_zbuff(void)
+{
+    size_t size = (size_t)screen_w() * screen_h();
+    for (size_t i = 0; i < size; ++i)
+        zbuff[i] = INT_MAX;
+}
+
+/* ------------------------------------------------------------------ */
+/* Scanline */
+
+static inline void makej(
+    long x1, long x2,
+    long n1z, long n2z,
+    long y,
+    long n1x, long n1y,
+    long n2x, long n2y)
+{
+    if (y < 0 || y >= screen_h())
+        return;
+
+    if (x1 > x2) {
+        long t;
+        t = x1; x1 = x2; x2 = t;
+        t = n1z; n1z = n2z; n2z = t;
+        t = n1x; n1x = n2x; n2x = t;
+        t = n1y; n1y = n2y; n2y = t;
+    }
+
+    if (x2 < 0 || x1 >= screen_w())
+        return;
+
+    if (x1 < 0) x1 = 0;
+    if (x2 >= screen_w()) x2 = screen_w() - 1;
+
+    long dx = x2 - x1;
+    if (dx <= 0) return;
+
+    long dz = (n2z - n1z) / dx;
+    long dnx = (n2x - n1x) / dx;
+    long dny = (n2y - n1y) / dx;
+
+    long z = n1z;
+    long nx = n1x;
+    long ny = n1y;
+
+    byte *pix = screen_buf() + y * screen_w() + x1;
+    int *zb = zbuff + y * screen_w() + x1;
+
+    for (long x = x1; x <= x2; ++x) {
+        if (z < *zb) {
+            int rx = (abs(nx) >> 7) + 64;
+            int ry = (abs(ny) >> 7) + 64;
+            *pix = envmapa[(ry << 7) + rx];
+            *zb = (int)z;
+        }
+        pix++;
+        zb++;
+        z += dz;
+        nx += dnx;
+        ny += dny;
+    }
+}
+
+/* ------------------------------------------------------------------ */
+
+static void raster_face(unsigned f)
+{
+    int miny = polyg[f][0].y;
+    int maxy = polyg[f][0].y;
+
+    for (int i = 1; i < 3; ++i) {
+        if (polyg[f][i].y < miny) miny = polyg[f][i].y;
+        if (polyg[f][i].y > maxy) maxy = polyg[f][i].y;
+    }
+
+    for (int y = miny; y <= maxy; ++y) {
+        int hits = 0;
+        long xs[2], zs[2], nxs[2], nys[2];
+
+        for (int i = 0; i < 3; ++i) {
+            int j = (i + 1) % 3;
+            long y1 = polyg[f][i].y;
+            long y2 = polyg[f][j].y;
+
+            if ((y >= y1 && y < y2) || (y >= y2 && y < y1)) {
+                long dy = y2 - y1;
+                long t = ((y - y1) << 16) / dy;
+
+                xs[hits] = polyg[f][i].x +
+                           ((polyg[f][j].x - polyg[f][i].x) * t >> 16);
+
+                zs[hits] = polyg[f][i].z +
+                           ((polyg[f][j].z - polyg[f][i].z) * t >> 16);
+
+                nxs[hits] = rot[f][i].n_x +
+                            ((rot[f][j].n_x - rot[f][i].n_x) * t >> 16);
+
+                nys[hits] = rot[f][i].n_y +
+                            ((rot[f][j].n_y - rot[f][i].n_y) * t >> 16);
+                hits++;
+            }
+        }
+
+        if (hits == 2) {
+            makej(xs[0], xs[1], zs[0], zs[1], y,
+                  nxs[0], nys[0], nxs[1], nys[1]);
+        }
+    }
+}
+
+/* ------------------------------------------------------------------ */
+
+static void show(void)
+{
+    for (int i = 0; i < nFaces; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            polyg[i][j].x =
+                ((rot[i][j].x << 8) / (256 + rot[i][j].z)) * XRATIO() + X_S();
+            polyg[i][j].y =
+                ((rot[i][j].y << 8) / (256 + rot[i][j].z)) * YRATIO() + Y_S();
+            polyg[i][j].z = rot[i][j].z << 16;
+        }
+
+        long zz =
+            (polyg[i][2].x - polyg[i][0].x) *
+            (polyg[i][1].y - polyg[i][0].y) -
+            (polyg[i][1].x - polyg[i][0].x) *
+            (polyg[i][2].y - polyg[i][0].y);
+
+        if (zz <= 0)
+            raster_face(i);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+
+void disp3d(void)
+{
+    for (int i = 0; i < nFaces; ++i) {
+        for (int j = 0; j < 3; ++j) {
+
+            long x = obj[i][j].x + centerx;
+            long y = obj[i][j].y + centery;
+            long z = obj[i][j].z + centerz;
+
+            long tx = (z * coss[alfa] - x * sinn[alfa]) >> 16;
+            long tz = (z * sinn[alfa] + x * coss[alfa]) >> 16;
+
+            long ty = (y * coss[beta] - tz * sinn[beta]) >> 16;
+            tz = (y * sinn[beta] + tz * coss[beta]) >> 16;
+
+            long fx = (ty * coss[gama] - tx * sinn[gama]) >> 16;
+            long fy = (ty * sinn[gama] + tx * coss[gama]) >> 16;
+
+            rot[i][j].x = fx;
+            rot[i][j].y = fy;
+            rot[i][j].z = tz;
+
+            /* normals: rotate only */
+            x = obj[i][j].n_x;
+            y = obj[i][j].n_y;
+            z = obj[i][j].n_z;
+
+            tx = (z * coss[alfa] - x * sinn[alfa]) >> 16;
+            tz = (z * sinn[alfa] + x * coss[alfa]) >> 16;
+
+            ty = (y * coss[beta] - tz * sinn[beta]) >> 16;
+            tz = (y * sinn[beta] + tz * coss[beta]) >> 16;
+
+            fx = (ty * coss[gama] - tx * sinn[gama]) >> 16;
+            fy = (ty * sinn[gama] + tx * coss[gama]) >> 16;
+
+            rot[i][j].n_x = fx;
+            rot[i][j].n_y = fy;
+            rot[i][j].n_z = tz;
+        }
+    }
+
+    clear_zbuff();
+    memset(screen_buf(), 0, screen_w() * screen_h());
+    show();
+}
+
+/* ------------------------------------------------------------------ */
+/* Constructors */
+
+static void build_envmap(float power)
+{
+    envmapa = calloc(128 * 128, sizeof(byte));
+    if (!envmapa) return;
+
+    byte table[256];
+    for (int i = 0; i < 256; ++i)
+        table[i] = powf(i / 255.0f, power) * 255.0f;
+
+    for (int y = 0; y < 128; ++y)
+        for (int x = 0; x < 128; ++x) {
+            int d = (x - 64) * (x - 64) + (y - 64) * (y - 64) + 2100;
+            envmapa[y * 128 + x] = table[0x7A120 / d];
+        }
+}
+
+void patnikconstructor(void)
+{
+    precalculate();
+    nFaces = patniknFaces;
+    obj = patnikobj;
+    memcpy(rot, obj, nFaces * sizeof(POLYS));
+    build_envmap(2.0f);
+}
+
+void torusconstructor(void)
+{
+    precalculate();
+    nFaces = torusnFaces;
+    obj = torusobj;
+    memcpy(rot, obj, nFaces * sizeof(POLYS));
+    build_envmap(3.0f);
+}
+
+void destructor(void)
+{
+    free(envmapa);
+    envmapa = NULL;
+    unset_zbuff();
+}
