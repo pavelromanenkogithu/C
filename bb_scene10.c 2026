@@ -1,0 +1,110 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <math.h>
+#include <aalib.h>
+#include "bb.h"
+#include "tex.h"
+
+int32_t salpha, sbeta, sgamma;
+int32_t scenterx, scentery, scenterz;
+double szoom;
+
+int32_t ealpha, ebeta, egamma;
+int32_t ecenterx, ecentery, ecenterz;
+double ezoom;
+
+double poww = 1.0;
+
+int32_t alfa, beta, gama;
+int32_t centerx, centery, centerz;
+double zoom;
+aa_context *context;
+aa_params *params;
+
+static inline double interp(double start, double end, double mul1, double mul2) {
+    return start * mul2 + end * mul1;
+}
+
+void strobikstart(void) {}
+void strobikend(void) {}
+void bbwait(uint64_t microseconds) {}
+void patnikconstructor(void) {}
+void timestuff(int a, void* b, void (*draw)(), uint64_t time) {
+    draw();
+}
+
+static void draw3d(uint64_t starttime, uint64_t endtime) {
+    uint64_t current = starttime;
+    double div = (double)(endtime - starttime);
+    if(div == 0) div = 1.0;
+
+    double mul1 = pow((double)(current - starttime)/div, poww);
+    double mul2 = 1.0 - mul1;
+    if(mul1 < 0) { mul1 = 0; mul2 = 1; }
+    if(mul2 < 0) { mul2 = 0; mul1 = 1; }
+
+    alfa = (int32_t)interp(salpha, ealpha, mul1, mul2) % 360;
+    beta = (int32_t)interp(sbeta, ebeta, mul1, mul2) % 360;
+    gama = (int32_t)interp(sgamma, egamma, mul1, mul2) % 360;
+
+    centerx = (int32_t)interp(scenterx, ecenterx, mul1, mul2);
+    centery = (int32_t)interp(scentery, ecentery, mul1, mul2);
+    centerz = (int32_t)interp(scenterz, ecenterz, mul1, mul2);
+    zoom = interp(szoom, ezoom, mul1, mul2);
+
+    disp3d();
+    aa_render(context, params, 0, 0, aa_scrwidth(context), aa_scrheight(context));
+    aa_flush(context);
+}
+
+static void do3d(uint64_t time) {
+    timestuff(0, NULL, (void(*)())draw3d, time);
+
+    salpha = ealpha % 360;
+    sbeta  = ebeta % 360;
+    sgamma = egamma % 360;
+    szoom  = ezoom;
+    scenterx = ecenterx;
+    scentery = ecentery;
+    scenterz = ecenterz;
+}
+
+void scene10(void) {
+    salpha = sbeta = sgamma = scenterx = scentery = scenterz = 0;
+    szoom = 0.0;
+    ealpha = ebeta = egamma = ecenterx = ecentery = ecenterz = 0;
+    ezoom = 0.0;
+    poww = 1.0;
+
+    draw3d(0, 1);
+
+    patnikconstructor();
+    params->gamma = 1.0;
+    centery = -40;
+
+    strobikstart();
+    zoom = 3.0;
+    alfa = 90; beta = 0; gama = 180;
+    draw3d(0, 1);
+    strobikend();
+    bbwait(500000);
+
+    salpha = 270; sbeta = 0; sgamma = 180; szoom = 3.0; scentery = -40;
+    ealpha = 450; ebeta = 0; egamma = 180; ezoom = 3.0; ecentery = -40;
+    do3d(4000000);
+
+    poww = 3.0; ezoom = 2.0; ebeta = 90; ecenterz = 60; ecentery = 50;
+    do3d(3000000);
+
+    poww = 0.4; ebeta = 60;
+    do3d(500000);
+
+    poww = 5.0; ebeta = 90;
+    do3d(500000);
+
+    poww = 2.0; ecenterz = 0; ecenterx = 60; ebeta = 0; egamma = 900; ezoom = 0.1;
+    do3d(11500000);
+
+    params->gamma = 1.0;
+}
