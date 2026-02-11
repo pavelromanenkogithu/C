@@ -1,0 +1,68 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ncurses.h>
+
+#define SCREEN_W 80
+#define SCREEN_H 24
+
+void fastscale(
+    unsigned char *src, unsigned char *dst,
+    int sw, int sh,
+    int dw, int dh)
+{
+    int x_ratio = (sw << 16) / dw + 1;
+    int y_ratio = (sh << 16) / dh + 1;
+
+    for (int y = 0; y < dh; y++) {
+        int sy = (y * y_ratio) >> 16;
+        for (int x = 0; x < dw; x++) {
+            int sx = (x * x_ratio) >> 16;
+            dst[y * dw + x] = src[sy * sw + sx];
+        }
+    }
+}
+
+void draw_buffer(unsigned char *buffer, int w, int h)
+{
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            unsigned char v = buffer[y * w + x];
+            mvaddch(y, x, v ? '#' : ' ');
+        }
+    }
+}
+
+int main()
+{
+    initscr();
+    noecho();
+    curs_set(FALSE);
+    timeout(0);
+
+    int sw = 16, sh = 16;
+    unsigned char src[256];
+    memset(src, 0, sizeof(src));
+
+    for (int i = 0; i < 16; i++) {
+        src[i * 16 + i] = 1;
+        src[i * 16 + (15 - i)] = 1;
+    }
+
+    unsigned char scaled[SCREEN_W * SCREEN_H];
+
+    while (1) {
+        clear();
+
+        fastscale(src, scaled, sw, sh, SCREEN_W, SCREEN_H);
+        draw_buffer(scaled, SCREEN_W, SCREEN_H);
+
+        refresh();
+
+        if (getch() == 'q')
+            break;
+    }
+
+    endwin();
+    return 0;
+}
