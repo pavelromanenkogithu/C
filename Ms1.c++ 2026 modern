@@ -1,0 +1,44 @@
+#include <cstdint>
+#include <vector>
+#include <string>
+#include <stdexcept>
+#include <cstdio>
+
+struct Image {
+    std::vector<uint8_t> data;
+    int width;
+    int height;
+
+    Image(std::vector<uint8_t> d, int w, int h)
+        : data(std::move(d)), width(w), height(h) {}
+
+    // Get pixel value at (x, y)
+    uint8_t at(int x, int y) const {
+        if (x < 0 || x >= width || y < 0 || y >= height)
+            throw std::out_of_range("Pixel coordinates out of bounds");
+        return data[y * width + x];
+    }
+
+    // Save as PGM (grayscale) for quick viewing
+    void saveAsPGM(const std::string& filename) const {
+        FILE* f = fopen(filename.c_str(), "wb");
+        if (!f) throw std::runtime_error("Cannot open file");
+        fprintf(f, "P5\n%d %d\n255\n", width, height);
+        fwrite(data.data(), 1, data.size(), f);
+        fclose(f);
+    }
+};
+
+// Example initialization
+Image ms1{
+    std::vector<uint8_t>{
+        181, 240, 136, 19, 176, 29, 34, 232, 168, 36, 96, 105,
+        // ... insert all remaining bytes here ...
+        49, 4, 5, 17, 0, 0, 200
+    },
+    200, // width
+    169  // height
+};
+
+// Usage example:
+// ms1.saveAsPGM("image.pgm"); // Open with any image viewer
