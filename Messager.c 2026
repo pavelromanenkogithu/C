@@ -1,0 +1,77 @@
+#include <iostream>
+#include <vector>
+#include <string>
+#include <thread>
+#include <chrono>
+
+struct Screen {
+    int width;
+    int height;
+    std::vector<char> textBuffer;
+    std::vector<char> attrBuffer;
+
+    Screen(int w, int h) 
+        : width(w), height(h), textBuffer(w*h, ' '), attrBuffer(w*h, 0) {}
+
+    void putChar(int x, int y, char c, char attr = 0) {
+        if (x < 0 || x >= width || y < 0 || y >= height) return;
+        textBuffer[y * width + x] = c;
+        attrBuffer[y * width + x] = attr;
+    }
+
+    void render() {
+        system("clear"); // Linux/macOS, "cls" for Windows
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x)
+                std::cout << textBuffer[y * width + x];
+            std::cout << '\n';
+        }
+    }
+};
+
+class Messenger {
+    Screen& screen;
+    int cursorX = 0, cursorY = 0;
+
+public:
+    Messenger(Screen& s) : screen(s) {}
+
+    void put(char c) {
+        if (c == '\n') {
+            cursorX = 0;
+            cursorY++;
+            if (cursorY >= screen.height) cursorY = screen.height - 1;
+            return;
+        }
+        screen.putChar(cursorX, cursorY, c);
+        cursorX++;
+        if (cursorX >= screen.width) {
+            cursorX = 0;
+            cursorY++;
+            if (cursorY >= screen.height) cursorY = screen.height - 1;
+        }
+    }
+
+    void typeMessage(const std::string& msg, int delayMs = 30) {
+        for (char c : msg) {
+            put(c);
+            screen.render();
+            std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+        }
+    }
+};
+
+int main() {
+    Screen screen(50, 10);
+    Messenger messenger(screen);
+
+    messenger.typeMessage(
+        "Wake up, prodigal son!\n"
+        "Air out the rooms.\n"
+        "Call your mother!\n"
+        "You can study pharmacy and code at the same time!\n"
+        "In this life, you are a man!\n"
+    );
+
+    return 0;
+}
