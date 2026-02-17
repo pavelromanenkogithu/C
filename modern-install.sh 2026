@@ -1,0 +1,102 @@
+#!/usr/bin/env sh
+# modern-install.sh
+# Modern replacement for install-sh
+
+set -euo pipefail
+
+# --- Define commands ---
+install_cmd=$(command -v install || echo "install")
+strip_cmd=$(command -v strip || true)
+
+# --- Initialize variables ---
+src=""
+dst=""
+mode=""
+owner=""
+group=""
+make_dir=false
+strip_file=false
+backup=false
+
+# --- Parse arguments ---
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -c) # copy instead of move
+        copy=true
+        shift
+        ;;
+    -d)
+        make_dir=true
+        shift
+        ;;
+    -m)
+        mode="$2"
+        shift 2
+        ;;
+    -o)
+        owner="$2"
+        shift 2
+        ;;
+    -g)
+        group="$2"
+        shift 2
+        ;;
+    -s)
+        strip_file=true
+        shift
+        ;;
+    --backup)
+        backup=true
+        shift
+        ;;
+    *)
+        if [ -z "$src" ]; then
+            src="$1"
+        else
+            dst="$1"
+        fi
+        shift
+        ;;
+  esac
+done
+
+# --- Validations ---
+if $make_dir; then
+    [ -n "$dst" ] || dst="$src"
+    mkdir -p "$dst"
+    echo "Directory created: $dst"
+    exit 0
+fi
+
+[ -f "$src" ] || { echo "Error: source file '$src' not found"; exit 1; }
+[ -n "$dst" ] || { echo "Error: destination not specified"; exit 1; }
+
+# If destination is a directory, append filename
+if [ -d "$dst" ]; then
+    dst="$dst/$(basename "$src")"
+fi
+
+# --- Ensure destination directory exists ---
+dstdir=$(dirname "$dst")
+mkdir -p "$dstdir"
+
+# --- Backup existing file if needed ---
+if $backup && [ -f "$dst" ]; then
+    cp -p "$dst" "$dst.bak"
+    echo "Backup created: $dst.bak"
+fi
+
+# --- Install file ---
+cmd_args=""
+[ -n "$mode" ] && cmd_args="$cmd_args -m $mode"
+[ -n "$owner" ] && cmd_args="$cmd_args -o $owner"
+[ -n "$group" ] && cmd_args="$cmd_args -g $group"
+
+$install_cmd $cmd_args "$src" "$dst"
+echo "Installed $src -> $dst"
+
+# --- Strip binary if requested ---
+if $strip_file && [ -x "$dst" ] && [ -n "$strip_cmd" ]; then
+    $strip_cmd "$dst"
+    echo "Stripped binary: $dst"
+fi
