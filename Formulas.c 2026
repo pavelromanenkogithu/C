@@ -1,0 +1,129 @@
+// Fractal 2026 - Single File Edition
+// C23 + OpenMP + Smooth Coloring
+// Build: gcc -O3 -march=native -fopenmp main.c -o fractal -lm
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <math.h>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
+typedef double real_t;
+
+typedef struct {
+    uint32_t max_iter;
+    real_t escape_radius;
+} Config;
+
+typedef struct {
+    real_t center_x;
+    real_t center_y;
+    real_t scale;
+} Viewport;
+
+static inline double smooth_iter(real_t zr, real_t zi, uint32_t iter) {
+    double mag = zr * zr + zi * zi;
+    if (mag <= 0.0) return iter;
+    return iter + 1.0 - log2(log2(mag));
+}
+
+static double mandelbrot(real_t cre, real_t cim, const Config *cfg) {
+    real_t zr = 0.0;
+    real_t zi = 0.0;
+    real_t limit_sq = cfg->escape_radius * cfg->escape_radius;
+
+    for (uint32_t i = 0; i < cfg->max_iter; ++i) {
+        real_t zr2 = zr * zr;
+        real_t zi2 = zi * zi;
+
+        if (zr2 + zi2 > limit_sq)
+            return smooth_iter(zr, zi, i);
+
+        zi = 2.0 * zr * zi + cim;
+        zr = zr2 - zi2 + cre;
+    }
+
+    return cfg->max_iter;
+}
+
+static uint32_t color_map(double value, uint32_t max_iter) {
+    if (value >= max_iter)
+        return 0x000000;
+
+    double t = value / max_iter;
+
+    uint8_t r = (uint8_t)(9 * (1 - t) * t * t * t * 255);
+    uint8_t g = (uint8_t)(15 * (1 - t) * (1 - t) * t * t * 255);
+    uint8_t b = (uint8_t)(8.5 * (1 - t) * (1 - t) * (1 - t) * t * 255);
+
+    return (r << 16) | (g << 8) | b;
+}
+
+int main(void) {
+
+    const int width  = 1920;
+    const int height = 1080;
+
+    Config cfg = {
+        .max_iter = 1000,
+        .escape_radius = 4.0
+    };
+
+    Viewport view = {
+        .center_x = -0.75,
+        .center_y = 0.0,
+        .scale = 3.0 / width
+    };
+
+    double *buffer = malloc(sizeof(double) * width * height);
+    uint32_t *image = malloc(sizeof(uint32_t) * width * height);
+
+    if (!buffer || !image) {
+        fprintf(stderr, "Memory allocation failed\n");
+        return 1;
+    }
+
+    #pragma omp parallel for schedule(dynamic)
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+
+            real_t fx = view.center_x +
+                (x - width / 2.0) * view.scale;
+
+            real_t fy = view.center_y +
+                (y - height / 2.0) * view.scale;
+
+            buffer[y * width + x] =
+                mandelbrot(fx, fy, &cfg);
+        }
+    }
+
+    for (int i = 0; i < width * height; ++i)
+        image[i] = color_map(buffer[i], cfg.max_iter);
+
+    FILE *f = fopen("fractal.ppm", "wb");
+    if (!f) {
+        fprintf(stderr, "Failed to create output file\n");
+        return 1;
+    }
+
+    fprintf(f, "P6\n%d %d\n255\n", width, height);
+
+    for (int i = 0; i < width * height; ++i) {
+        uint32_t c = image[i];
+        fputc((c >> 16) & 255, f);
+        fputc((c >> 8) & 255, f);
+        fputc(c & 255, f);
+    }
+
+    fclose(f);
+
+    free(buffer);
+    free(image);
+
+    printf("Fractal saved as fractal.ppm\n");
+    return 0;
+}
