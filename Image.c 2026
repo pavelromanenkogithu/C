@@ -1,0 +1,117 @@
+/*
+ * BB: The portable demo - Modernized 2026
+ *
+ * (C) 1997 AA-group, modernized by BioBot
+ *
+ * This version uses SDL2 and modern C practices.
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <string.h>
+#include <math.h>
+#include "minilzo.h"
+#include "bb.h"
+#include "image.h"
+#include <SDL2/SDL.h>
+
+typedef double atype;
+
+static void fastcscale(const unsigned char *src, unsigned char *dst,
+                       int x1, int x2, int y1, int y2,
+                       int srcWidth, int dstWidth)
+{
+    int ddx = x1 + x1, ddx1 = x2 + x2;
+    int ddy = y1 + y1, ddy1 = y2 + y2;
+    int spx = 0, spy = 0;
+    int ex, ey = -ddy1;
+
+    if (!x1 || !x2 || !y1 || !y2) return;
+    if (ddx1 < ddx) spx = ddx / ddx1, ddx %= ddx1;
+    if (ddy1 < ddy) spy = (ddy / ddy1) * srcWidth, ddy %= ddy1;
+
+    const unsigned char *rowStart = src;
+    for (; y2; y2--) {
+        ex = -ddx1;
+        const unsigned char *px = rowStart;
+        for (int x = x2; x; x--) {
+            *dst++ = *px;
+            px += spx;
+            ex += ddx;
+            if (ex > 0) { px++; ex -= ddx1; }
+        }
+        dst += dstWidth - x2;
+        rowStart += spy;
+        ey += ddy;
+        if (ey > 0) { rowStart += srcWidth; ey -= ddy1; }
+    }
+}
+
+void scale(struct image *img, int x1, int y1, int x2, int y2)
+{
+    aa_context *c = context;
+    const int width = aa_imgwidth(c);
+    const int height = aa_imgheight(c);
+
+    if (!img->decompressed) decompressimg(img);
+
+    char *imgdata = img->decompressed;
+    memset(c->imagebuffer, 0, width * height);
+
+    int xx1 = 0, yy1 = 0, xx2 = width-1, yy2 = height-1;
+    fastcscale((unsigned char*)imgdata, (unsigned char*)c->imagebuffer,
+               x1, x2, y1, y2, img->width, width);
+}
+
+int dualmode = 0;
+
+void scale2(struct image *img, int x1, int y1, int x2, int y2)
+{
+    aa_context *c = context;
+    const int width = aa_imgwidth(c) / 2;
+    const int height = aa_imgheight(c);
+
+    if (!img->decompressed) decompressimg(img);
+
+    char *imgdata = img->decompressed;
+    dualmode ^= 1;
+
+    fastcscale((unsigned char*)imgdata, (unsigned char*)(c->imagebuffer + width * dualmode),
+               x1, x2, y1, y2, img->width, width);
+}
+
+char *decompressimg(struct image *img)
+{
+    size_t bufsize = (size_t)img->width * img->height;
+    unsigned char *data = calloc(bufsize, sizeof(unsigned char));
+    if (!data) { perror("malloc failed"); exit(EXIT_FAILURE); }
+
+    size_t size = bufsize;
+    int r = lzo1x_decompress(img->data, img->size, data, &size, NULL);
+    if (r != LZO_E_OK) {
+        fprintf(stderr, "Compression failed: %d\n", r);
+        exit(EXIT_FAILURE);
+    }
+    img->decompressed = (char*)data;
+    return img->decompressed;
+}
+
+void dispimg(struct image *img, bool dual)
+{
+    int imgw = img->width, imgh = img->height;
+    int width = aa_mmwidth(context);
+    int height = aa_mmheight(context);
+
+    if (dual) width /= 2;
+
+    int x2 = imgw, y2 = imgh;
+    if (imgw * height / width > imgh) y2 = imgw * height / width;
+    else x2 = imgh * width / height;
+
+    int x1 = (imgw - x2) / 2;
+    int y1 = (imgh - y2) / 2;
+
+    if (dual) scale2(img, x1, y1, x2, y2);
+    else scale(img, x1, y1, x2, y2);
+}
