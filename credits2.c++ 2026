@@ -1,0 +1,75 @@
+#include <cmath>
+#include <vector>
+#include <string>
+#include <cstdint>
+#include <algorithm>
+#include <thread>
+#include <chrono>
+#include <iostream>
+
+namespace BB {
+    struct Context {
+        int width = 80;
+        int height = 25;
+        std::vector<uint8_t> imageBuffer;
+        Context(int w, int h) : width(w), height(h), imageBuffer(w * h, 0) {}
+        void clear() { std::fill(imageBuffer.begin(), imageBuffer.end(), 0); }
+        void flush() {}
+    };
+
+    void drawText(Context& ctx, int x, int y, const std::string& text) {
+        if (y < 0 || y >= ctx.height) return;
+        for (size_t i = 0; i < text.size() && x + i < (size_t)ctx.width; ++i)
+            ctx.imageBuffer[y * ctx.width + x + i] = text[i];
+    }
+
+    void sleepMs(int ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); }
+}
+
+constexpr int MAXTIME = 2500000;
+constexpr int LOGOHEIGHT = 6;
+constexpr int YSTART = 3;
+
+struct Params {
+    int randomVal = 0;
+    int bright = 256;
+};
+
+int64_t TIME = 0;
+int64_t starttime = 0;
+int64_t endtime = 0;
+Params params;
+BB::Context context(120, 40);
+
+void morphDraw(std::vector<uint8_t>& source, std::vector<uint8_t>& target, int64_t state) {
+    int64_t mul = std::min(state * 256 / MAXTIME, int64_t(256));
+    int64_t mul1 = 256 - mul;
+    for (size_t i = 0; i < source.size(); ++i)
+        context.imageBuffer[i] = uint8_t((source[i] * mul1 + target[i] * mul) >> 8);
+    context.flush();
+}
+
+void displayTextEffect(int p) {
+    context.clear();
+    BB::drawText(context, context.width / 2 - 5, YSTART, "THE END");
+    BB::drawText(context, context.width / 2 - 9, YSTART + 2, "<PROJECT><PROJECT>");
+    context.flush();
+}
+
+void creditsDemo() {
+    std::vector<uint8_t> source(context.width * context.height, 0);
+    std::vector<uint8_t> target(context.width * context.height, 255);
+
+    starttime = TIME = 0;
+    for (int frame = 0; frame < 200; ++frame) {
+        morphDraw(source, target, frame * 10000);
+        displayTextEffect(frame);
+        TIME += 10000;
+        BB::sleepMs(30);
+    }
+}
+
+int main() {
+    creditsDemo();
+    return 0;
+}
