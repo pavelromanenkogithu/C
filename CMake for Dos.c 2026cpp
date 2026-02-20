@@ -1,0 +1,10 @@
+cmake_minimum_required(VERSION 3.25)
+project(modern_bb_audio)
+
+set(CMAKE_CXX_STANDARD 20)
+
+find_package(SDL3 REQUIRED)
+find_package(OpenMPT REQUIRED)
+
+add_executable(modern_bb_audio modern_bb_audio.cpp)
+target_link_libraries(modern_bb_audio SDL3::SDL3 OpenMPT::openmpt)
