@@ -1,0 +1,58 @@
+// modern_bb_audio.cpp
+#include <SDL3/SDL.h>
+#include <openmpt/libopenmpt.hpp>
+#include <fstream>
+#include <vector>
+#include <memory>
+
+static std::unique_ptr<openmpt::module> mod;
+
+void audio_callback(void* userdata, Uint8* stream, int len)
+{
+    float* out = reinterpret_cast<float*>(stream);
+    int frames = len / sizeof(float) / 2; // stereo
+
+    if (mod) {
+        mod->read_interleaved_stereo(48000, frames, out);
+    } else {
+        memset(stream, 0, len);
+    }
+}
+
+std::vector<char> load_file(const char* path)
+{
+    std::ifstream file(path, std::ios::binary);
+    return std::vector<char>((std::istreambuf_iterator<char>(file)),
+                              std::istreambuf_iterator<char>());
+}
+
+int main(int argc, char* argv[])
+{
+    if (argc < 2) {
+        printf("Usage: %s file.s3m\n", argv[0]);
+        return 1;
+    }
+
+    SDL_Init(SDL_INIT_AUDIO);
+
+    auto data = load_file(argv[1]);
+    mod = std::make_unique<openmpt::module>(data);
+
+    SDL_AudioSpec spec{};
+    spec.freq = 48000;
+    spec.format = SDL_AUDIO_F32;
+    spec.channels = 2;
+    spec.samples = 1024;
+    spec.callback = audio_callback;
+
+    SDL_AudioDeviceID dev = SDL_OpenAudioDevice(nullptr, 0, &spec, nullptr, 0);
+    SDL_PauseAudioDevice(dev, 0);
+
+    printf("Playing: %s\n", mod->get_metadata("title").c_str());
+
+    SDL_Delay((Uint32)(mod->get_duration_seconds() * 1000));
+
+    SDL_CloseAudioDevice(dev);
+    SDL_Quit();
+    return 0;
+}
