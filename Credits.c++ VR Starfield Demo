@@ -1,0 +1,84 @@
+#include <VRAPI.h>
+#include <GPUCompute.h>
+#include <AIShaders.h>
+#include <Audio3D.h>
+#include <NeuroInput.h>
+#include <vector>
+
+struct Star {
+    vec3 position;
+    vec3 velocity;
+    float brightness;
+    vec3 color;
+};
+
+std::vector<Star> starfield;
+
+void initStars(int count) {
+    starfield.reserve(count);
+    for(int i=0;i<count;i++){
+        Star s;
+        s.position = random3D(-1000, 1000);
+        s.velocity = random3D(-1,1);
+        s.brightness = randomFloat(0.5,1.0);
+        s.color = vec3(1.0,1.0,1.0);
+        starfield.push_back(s);
+    }
+}
+
+void updateStars(float deltaTime, VRUser user) {
+    for(auto &s : starfield) {
+        s.position += AIComputeVelocity(s, deltaTime);
+        vec3 gaze = user.getGazeDirection();
+        float influence = dot(normalize(s.position), gaze);
+        s.position += gaze * influence * 0.5f * deltaTime;
+    }
+}
+
+void renderStars(GPUContext &gpu) {
+    gpu.bindShader(AIStarShader);
+    gpu.uploadStars(starfield);
+    gpu.drawPoints();
+}
+
+struct Credit {
+    std::string text;
+    vec3 position;
+    vec3 velocity;
+    vec3 color;
+};
+std::vector<Credit> credits;
+
+void initCredits() {
+    credits.push_back({"Thanks for watching BB 2036!", vec3(0,2,-5), vec3(0,0.01,0), vec3(0.7,0.9,1.0)});
+    credits.push_back({"Powered by AI & VR", vec3(-2,1,-6), vec3(0,0.01,0), vec3(1.0,0.8,0.5)});
+}
+
+void updateCredits(float dt) {
+    for(auto &c : credits){
+        c.position += c.velocity * dt;
+        c.color *= vec3(0.99);
+    }
+}
+
+void demoLoop(VRUser user, GPUContext gpu) {
+    float dt = 0.016f;
+    while(true){
+        updateStars(dt, user);
+        updateCredits(dt);
+        gpu.clear();
+        renderStars(gpu);
+        for(auto &c : credits) VRAPI::drawText3D(c.text, c.position, c.color);
+        Audio3D::updateSpatialSound(user.getPosition(), starfield);
+        VRAPI::framePresent();
+    }
+}
+
+int main() {
+    VRUser user = VRAPI::initVR();
+    GPUContext gpu = GPUCompute::init();
+    initStars(10000);
+    initCredits();
+    demoLoop(user, gpu);
+    return 0;
+}
