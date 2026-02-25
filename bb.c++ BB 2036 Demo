@@ -1,0 +1,79 @@
+#include <iostream>
+#include <string>
+#include <vector>
+#include <thread>
+#include <chrono>
+#include <cmath>
+#include <cstdlib>
+#include <functional>
+#include <ncurses.h>  // modern ASCII/terminal graphics
+
+// Base class for all scenes
+class Scene {
+public:
+    virtual void render() = 0;
+    virtual void update() = 0;
+    virtual ~Scene() = default;
+};
+
+// Text-based scene
+class TextScene : public Scene {
+    std::string content;
+    int color_pair;
+public:
+    TextScene(const std::string& txt, int color=1) : content(txt), color_pair(color) {}
+    void render() override {
+        int row, col;
+        getmaxyx(stdscr, row, col);
+        int start_col = std::max(0, (col - content.size()) / 2);
+        attron(COLOR_PAIR(color_pair));
+        mvprintw(row/2, start_col, "%s", content.c_str());
+        attroff(COLOR_PAIR(color_pair));
+    }
+    void update() override {
+        // AI or animation logic can be added here
+    }
+};
+
+// Asynchronous timer helper
+void async_wait(int ms, std::function<void()> callback) {
+    std::thread([ms, callback]{
+        std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+        callback();
+    }).detach();
+}
+
+int main() {
+    initscr();             // initialize terminal
+    start_color();
+    use_default_colors();
+    init_pair(1, COLOR_CYAN, -1);
+
+    noecho();
+    curs_set(0);
+    nodelay(stdscr, TRUE);
+
+    std::vector<Scene*> scenes = {
+        new TextScene("Welcome to BB 2036 Demo 🌌", 1),
+        new TextScene("AI-powered ASCII graphics", 1)
+    };
+
+    bool quit = false;
+    while (!quit) {
+        erase();
+        for(auto scene : scenes) {
+            scene->update();
+            scene->render();
+        }
+        refresh();
+
+        int ch = getch();
+        if (ch == 'q' || ch == 'Q') quit = true;
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(33)); // ~30 FPS
+    }
+
+    for(auto scene : scenes) delete scene;
+    endwin();
+    return 0;
+}
