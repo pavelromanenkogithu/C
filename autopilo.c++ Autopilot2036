@@ -1,0 +1,146 @@
+/*
+ * XaoS 2036 - modern realtime fractal zoomer autopilot
+ * Authors: Jan Hubicka, Thomas Marsh (original)
+ * Modernized by BioBot 2036
+ *
+ * License: GNU GPL v2 or later
+ */
+
+#include <vector>
+#include <cstdlib>
+#include <cassert>
+#include <random>
+#include <functional>
+#include <algorithm>
+
+// Forward declaration of zoom_context
+struct ZoomContext {
+    int width;
+    int height;
+    int scanline;
+    std::vector<int> vbuff;
+    std::vector<int> xpos;
+    std::vector<int> colors;
+    struct { int mc, nc; } s;
+    bool dirty;
+    bool incomplete;
+};
+
+class Autopilot {
+public:
+    Autopilot() : minSize(1000), maxSize(0), autoTime(0), minLong(0), interLevel(0) {
+        std::random_device rd;
+        rng.seed(rd());
+    }
+
+    void clean() {
+        minSize = 1000;
+        maxSize = 0;
+        autoTime = 0;
+        minLong = 0;
+    }
+
+    void step(ZoomContext& context, int& outX, int& outY, int& outControl, std::function<void()> changed) {
+        assert(changed); // ensure callback is provided
+
+        if (context.dirty)
+            clean();
+
+        int currentSize = context.s.mc - context.s.nc;
+
+        // Track min/max sizes safely
+        minSize = std::min(minSize, currentSize);
+        maxSize = std::max(maxSize, currentSize);
+
+        // Detect precision loss
+        int duplicateCount = 0;
+        for (int i = 0; i < context.width - 1; ++i)
+            if (context.xpos[i] == context.xpos[i + 1])
+                ++duplicateCount;
+
+        if (autoTime <= 0) {
+            if (context.incomplete && duplicateCount > context.width / 2) {
+                outControl = 0;
+                return;
+            }
+
+            minLong++;
+            const int NGUESSES1 = 50;
+            int maxGuess = NGUESSES1;
+
+            do {
+                --maxGuess;
+                generateRandomPoint(context);
+                evaluateRegion(context);
+            } while ((!isRegionValid()) && maxGuess > 0);
+
+            if (maxGuess > 0) {
+                currentControl = 1; // BUTTON1
+                interLevel = 1;
+            } else {
+                const int NGUESSES2 = 50;
+                maxGuess = NGUESSES2;
+                do {
+                    --maxGuess;
+                    generateRandomPoint(context);
+                    evaluateRegion(context);
+                } while (c > LOOKSIZE * LOOKSIZE / 2 && maxGuess > 0);
+
+                if (maxGuess > 0) {
+                    currentControl = 1;
+                    interLevel = 2;
+                } else {
+                    if (context.incomplete) {
+                        currentControl = 0;
+                        autoTime = 20;
+                    } else {
+                        currentControl = 3; // BUTTON3
+                        autoTime >>= 1;
+                    }
+                }
+            }
+        }
+
+        --autoTime;
+        outX = currentX;
+        outY = currentY;
+        outControl = currentControl;
+    }
+
+private:
+    int minSize;
+    int maxSize;
+    int autoTime;
+    int minLong;
+    int interLevel;
+
+    int currentX;
+    int currentY;
+    int currentControl;
+
+    int c; // region score
+
+    std::mt19937 rng;
+
+    static constexpr int LOOKSIZE = 5;
+
+    void generateRandomPoint(const ZoomContext& context) {
+        std::uniform_int_distribution<int> distX(LOOKSIZE, context.width - LOOKSIZE - 1);
+        std::uniform_int_distribution<int> distY(LOOKSIZE, context.height - LOOKSIZE - 1);
+        currentX = distX(rng);
+        currentY = distY(rng);
+        autoTime = rng() % 100; // MAXTIME placeholder
+    }
+
+    void evaluateRegion(const ZoomContext& context) {
+        c = 0;
+        for (int i = currentX - LOOKSIZE; i <= currentX + LOOKSIZE; ++i)
+            for (int j = currentY - LOOKSIZE; j <= currentY + LOOKSIZE; ++j)
+                if (context.vbuff[i + j * context.scanline] == context.colors[0])
+                    ++c;
+    }
+
+    bool isRegionValid() const {
+        return c > 0 && c <= LOOKSIZE * LOOKSIZE;
+    }
+};
